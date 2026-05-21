@@ -4,13 +4,48 @@ import re
 import nltk
 import spacy
 
-nltk.download('punkt')
-nltk.download('stopwords')
-
 from nltk.tokenize import sent_tokenize, word_tokenize
 from nltk.corpus import stopwords
 
-nlp = spacy.load("en_core_web_sm")
+_nltk_ready = False
+_nlp = None
+
+
+def _ensure_nltk_resources():
+    """Download NLTK resources only once and only when preprocessing is executed."""
+    global _nltk_ready
+    if _nltk_ready:
+        return
+
+    resources = [
+        ("tokenizers/punkt", "punkt"),
+        ("tokenizers/punkt_tab", "punkt_tab"),
+        ("corpora/stopwords", "stopwords"),
+    ]
+
+    for resource_path, package_name in resources:
+        try:
+            nltk.data.find(resource_path)
+        except LookupError:
+            nltk.download(package_name, quiet=True)
+
+    _nltk_ready = True
+
+
+def _load_spacy_model():
+    """Load spaCy model if available; otherwise fall back to a blank English pipeline."""
+    try:
+        return spacy.load("en_core_web_sm")
+    except OSError:
+        return spacy.blank("en")
+
+
+def get_nlp():
+    """Lazily initialize spaCy pipeline to avoid startup lag on Streamlit reruns."""
+    global _nlp
+    if _nlp is None:
+        _nlp = _load_spacy_model()
+    return _nlp
 
 # ─────────────────────────────────────────
 # 1. TEXT EXTRACTION
@@ -89,6 +124,8 @@ def tokenize_text(text):
     - sentences
     - words (with stopword removal for analysis use)
     """
+    _ensure_nltk_resources()
+
     sentences = sent_tokenize(text)
 
     words = word_tokenize(text.lower())
@@ -111,6 +148,10 @@ def preprocess_documents(folder_path):
     Load → Extract → Clean → Tokenize
     Returns structured dataset.
     """
+    # Ensure heavy NLP resources are initialized only when the full pipeline is run.
+    _ensure_nltk_resources()
+    get_nlp()
+
     raw_documents = load_documents(folder_path)
     processed_dataset = {}
 
@@ -137,14 +178,16 @@ def preprocess_documents(folder_path):
 # 5. RUN
 # ─────────────────────────────────────────
 
-DOCUMENTS_FOLDER = "documents/"
-dataset = preprocess_documents(DOCUMENTS_FOLDER)
+if __name__ == "__main__":
+    DOCUMENTS_FOLDER = "documents/"
+    dataset = preprocess_documents(DOCUMENTS_FOLDER)
 
-# Preview output for first document
-first_doc = list(dataset.keys())[0]
-print("\n--- PREVIEW ---")
-print(f"Document     : {first_doc}")
-print(f"Cleaned text : {dataset[first_doc]['cleaned_text'][:300]}...")
-print(f"First 3 sentences:")
-for s in dataset[first_doc]['sentences'][:3]:
-    print(f"  - {s}")
+    if dataset:
+        # Preview output for first document only when script is run directly.
+        first_doc = list(dataset.keys())[0]
+        print("\n--- PREVIEW ---")
+        print(f"Document     : {first_doc}")
+        print(f"Cleaned text : {dataset[first_doc]['cleaned_text'][:300]}...")
+        print("First 3 sentences:")
+        for s in dataset[first_doc]["sentences"][:3]:
+            print(f"  - {s}")
